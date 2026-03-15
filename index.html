@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Autorickshaw Odyssey - Mumbai Traffic Sim</title>
+        <style>
+            body {
+                margin: 0;
+                overflow: hidden;
+                background: #111;
+                font-family: 'Arial Black', Arial;
+            }
+
+            canvas {
+                display: block;
+                margin: auto;
+                border: 2px solid #333;
+                image-rendering: pixelated;
+            }
+
+            #ui {
+                position: absolute;
+                top: 10px;
+                left: 10px;
+                color: #fff;
+                font-size: 16px;
+                text-shadow: 2px 2px 4px #000;
+                z-index: 10;
+            }
+
+            #phase {
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                color: #ffd700;
+                font-size: 18px;
+                font-weight: bold;
+            }
+
+            #gameOver {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background: rgba(0, 0, 0, 0.95);
+                color: white;
+                padding: 30px;
+                border-radius: 15px;
+                text-align: center;
+                display: none;
+                font-size: 20px;
+                border: 3px solid #ffd700;
+                max-width: 400px;
+            }
+
+            #collections {
+                font-size: 16px;
+                margin: 15px 0;
+                color: #ffd700;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="ui">
+            Score: <span id="score">0</span> | Distance: <span id="distance">0</span> | Speed: <span
+                id="speedVal">4</span>
+        </div>
+        <div id="phase">Village</div>
+        <canvas id="gameCanvas" width="420" height="700"></canvas>
+        <div id="gameOver">
+            <h2>🛺 Game Over!</h2>
+            <p id="reason"></p>
+            <p>Final Score: <span id="finalScore"></span></p>
+            <p>Distance: <span id="finalDist"></span></p>
+            <div id="collections">Collections: Loading...</div>
+            <button onclick="location.reload()"
+                style="padding: 12px 24px; font-size: 18px; background: #ffd700; color: black; border: none; border-radius: 8px; cursor: pointer;">Restart
+                Odyssey</button>
+        </div>
+
+        <script>
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            const lanes = [120, 210, 300];
+
+            let roadOffset = 0;
+            let speed = 4;
+            let score = 0;
+            let distance = 0;
+            let highScore = localStorage.getItem('highScore') || 0;
+            let gameRunning = true;
+            let rainActive = false;
+            let quickDodge = false;
+            let phase = 'village';
+
+            // COLLECTION COUNTERS - each food type
+            let collections = {
+                coin: 0,
+                chai: 0,
+                snack: 0
+            };
+
+            let player = {
+                x: 210,
+                y: 550,
+                width: 45,
+                height: 65,
+                speed: 8,
+                tilt: 0
+            };
+
+            let obstacles = [];
+            let rewards = [];
+            let trees = [];
+            let buildings = [];
+            let shops = [];
+            let construction = [];
+            let clouds = [];
+            let rainDrops = [];
+            let lightning = 0;
+
+            const MAX_OBSTACLES = 120;
+            const MAX_REWARDS = 15;
+            const MAX_RAINDROPS = 60;
+
+            let keys = {};
+            document.addEventListener('keydown', e => keys[e.key] = true);
+            document.addEventListener('keyup', e => keys[e.key] = false);
+
+            function getPhase() {
+                if (distance < 2000) return 'village';
+                if (distance < 5000) return 'suburb';
+                return 'city';
+            }
+
+            function updatePhase() {
+                const newPhase = getPhase();
+                if (newPhase !== phase) {
+                    phase = newPhase;
+                    document.getElementById('phase').textContent = phase.charAt(0).toUpperCase() + phase.slice(1);
+                    if (phase === 'city') rainActive = true;
+                    if (distance > 4000) quickDodge = true;
+                }
+            }
+
+            function spawnObstacle() {
+                let spawnChance = phase === 'village' ? 0.006 : phase === 'suburb' ? 0.012 : 0.02;
+                if (Math.random() > spawnChance || obstacles.length > MAX_OBSTACLES) return;
+
+                let types = phase === 'village' ? ['dog'] :
+                    phase === 'suburb' ? ['car', 'dog', 'bike'] :
+                        ['car', 'dog', 'barricade', 'bike', 'pothole'];
+
+                let type = types[Math.floor(Math.random() * types.length)];
+                let lane = lanes[Math.floor(Math.random() * lanes.length)];
+
+                let obstacle = {};
+                switch (type) {
+                    case 'car':
+                        obstacle = { type: 'car', x: lane - 12, y: -85, width: 48, height: 75, color: ['#c62828', '#1976d2', '#388e3c'][Math.floor(Math.random() * 3)] };
+                        break;
+                    case 'dog':
+                        obstacle = { type: 'dog', x: 95 + Math.random() * 230, y: -65, width: 35, height: 30, speedX: (Math.random() > 0.5 ? 1.5 : -1.5) };
+                        break;
+                    case 'barricade':
+                        obstacle = { type: 'barricade', x: lane - 18, y: -75, width: 65, height: 40 };
+                        break;
+                    case 'bike':
+                        obstacle = { type: 'bike', x: lane - 10, y: -65, width: 38, height: 60 };
+                        break;
+                    case 'pothole':
+                        obstacle = { type: 'pothole', x: lane + 2, y: -55, width: 58, height: 50 };
+                        break;
+                }
+                obstacles.push(obstacle);
+            }
+
+            function spawnReward() {
+                let spawnChance = 0.003 + (distance / 25000);
+                if (Math.random() > spawnChance || rewards.length > MAX_REWARDS) return;
+
+                let types = ['coin', 'chai', 'snack'];
+                let x = 100 + Math.random() * 220;
+                rewards.push({
+                    type: types[Math.floor(Math.random() * types.length)],
+                    x: x, y: -30, size: 16, spin: 0
+                });
+            }
+
+            function spawnEnvironment() {
+                if (Math.random() < 0.005 && clouds.length < 12)
+                    clouds.push({ x: Math.random() * 420, y: -70, speed: 0.7 });
+
+                if (phase === 'village' && Math.random() < 0.05 && trees.length < 25)
+                    trees.push({ x: [30, 370][Math.floor(Math.random() * 2)], y: -80 });
+
+                if (phase !== 'village' && Math.random() < 0.018 && buildings.length < 20)
+                    buildings.push({ x: 8 + Math.random() * 404, y: -160, height: 95 + Math.random() * 85 });
+
+                if (Math.random() < 0.01 && shops.length < 10)
+                    shops.push({ x: 25 + Math.random() * 15, y: -110 });
+
+                if (phase === 'city' && Math.random() < 0.007 && construction.length < 6)
+                    construction.push({ x: lanes[Math.floor(Math.random() * 3)], y: -130, width: 90, height: 50 });
+            }
+
+            function spawnRain() {
+                if (!rainActive || rainDrops.length > MAX_RAINDROPS || Math.random() > 0.12) return;
+                rainDrops.push({ x: Math.random() * 420, y: 0, len: 14 + Math.random() * 10, speed: 20 });
+            }
+
+            // UPDATE COLLECTION COUNTERS
+            function updateCollection(type) {
+                collections[type]++;
+                score += 25;
+            }
+
+            function update() {
+                if (!gameRunning) return;
+
+                let moveSpeed = (quickDodge ? 12 : 9) * (rainActive ? 0.7 : 1);
+                if (keys['ArrowLeft'] && player.x > 108) {
+                    player.x -= moveSpeed;
+                    player.tilt = -0.25;
+                }
+                else if (keys['ArrowRight'] && player.x < 292) {
+                    player.x += moveSpeed;
+                    player.tilt = 0.25;
+                }
+                else {
+                    player.tilt *= 0.85;
+                }
+
+                roadOffset += speed;
+                distance += speed * 0.3;
+                speed = Math.min(4 + distance / 550, 12);
+
+                document.getElementById('speedVal').textContent = Math.floor(speed);
+                document.getElementById('distance').textContent = Math.floor(distance);
+                updatePhase();
+
+                spawnObstacle();
+                spawnReward();
+                spawnEnvironment();
+                spawnRain();
+                if (rainActive && Math.random() < 0.003) lightning = 4;
+
+                obstacles.forEach(o => {
+                    o.y += speed;
+                    if (o.type === 'dog') {
+                        o.x = Math.max(95, Math.min(335, o.x + o.speedX));
+                        if (o.x <= 95 || o.x >= 335) o.speedX *= -1;
+                    }
+                });
+
+                rewards.forEach(r => { r.y += speed; r.spin += 0.3; });
+                [trees, buildings, shops, construction, clouds].forEach(arr =>
+                    arr.forEach(item => item.y += speed * (arr === clouds ? 0.5 : 1))
+                );
+                rainDrops.forEach(d => { d.y += d.speed; d.x += 1; });
+
+                const cleanupY = -120;
+                obstacles = obstacles.filter(o => o.y > cleanupY && o.y < canvas.height + 60);
+                rewards = rewards.filter(r => r.y > cleanupY && r.y < canvas.height + 40);
+                trees = trees.filter(t => t.y > cleanupY && t.y < canvas.height + 90);
+                buildings = buildings.filter(b => b.y > cleanupY && b.y < canvas.height + 170);
+                shops = shops.filter(s => s.y > cleanupY && s.y < canvas.height + 90);
+                construction = construction.filter(c => c.y > cleanupY && c.y < canvas.height + 110);
+                clouds = clouds.filter(c => c.y > cleanupY && c.y < canvas.height + 90);
+                rainDrops = rainDrops.filter(d => d.y < canvas.height + 30);
+
+                checkCollision();
+            }
+
+            function checkCollision() {
+                for (let o of obstacles) {
+                    let padding = 10;
+                    let hit = player.x + padding < o.x + o.width &&
+                        player.x + player.width - padding > o.x &&
+                        player.y + padding < o.y + o.height &&
+                        player.y + player.height - padding > o.y;
+
+                    if (hit) {
+                        const reasons = {
+                            dog: 'Hit street dog 🐕',
+                            car: 'Traffic crash 🚗',
+                            barricade: 'Construction 🚧',
+                            bike: 'Bike collision 🚲',
+                            pothole: 'Pothole trap 🕳️'
+                        };
+                        gameOver(reasons[o.type] || 'Crash!', score, distance);
+                        return;
+                    }
+                }
+
+                // COLLECT REWARDS WITH COUNTER UPDATE
+                for (let i = rewards.length - 1; i >= 0; i--) {
+                    let r = rewards[i];
+                    if (player.x < r.x + r.size * 1.3 &&
+                        player.x + player.width > r.x &&
+                        player.y < r.y + r.size * 1.3 &&
+                        player.y + player.height > r.y) {
+                        updateCollection(r.type);
+                        rewards.splice(i, 1);
+                    }
+                }
+            }
+
+            // COLLECTION STATS ON GAME OVER
+            function getCollectionStats() {
+                let stats = [];
+                if (collections.coin > 0) stats.push(`${collections.coin} Coins 🪙`);
+                if (collections.chai > 0) stats.push(`${collections.chai} Tea ☕`);
+                if (collections.snack > 0) stats.push(`${collections.snack} Pakora 🍢`);
+
+                return stats.length > 0 ? stats.join(' | ') : "No street food collected 😢";
+            }
+
+            function gameOver(reason, finalScore, finalDist) {
+                gameRunning = false;
+                document.getElementById('reason').textContent = reason;
+                document.getElementById('finalScore').textContent = finalScore;
+                document.getElementById('finalDist').textContent = Math.floor(finalDist);
+                document.getElementById('collections').textContent = `Collections: ${getCollectionStats()}`;
+                document.getElementById('gameOver').style.display = 'block';
+
+                if (finalScore > highScore) {
+                    highScore = finalScore;
+                    localStorage.setItem('highScore', highScore);
+                }
+            }
+
+            function drawBackground() {
+                let gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+                const colors = {
+                    village: ['#87CEEB', '#98D8C8'],
+                    suburb: ['#87c5ff', '#A8E6CF'],
+                    city: ['#4682B4', '#696969']
+                };
+                gradient.addColorStop(0, colors[phase][0]);
+                gradient.addColorStop(1, colors[phase][1]);
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            function drawRoad() {
+                ctx.fillStyle = '#2A2A2A';
+                ctx.fillRect(88, 0, 244, canvas.height);
+
+                ctx.strokeStyle = '#FFFF00';
+                ctx.lineWidth = 7;
+                ctx.setLineDash([30, 30]);
+                ctx.lineDashOffset = -(roadOffset * 2.5) % 60;
+                lanes.slice(0, -1).forEach(lane => {
+                    ctx.beginPath();
+                    ctx.moveTo(lane, 0);
+                    ctx.lineTo(lane, canvas.height);
+                    ctx.stroke();
+                });
+                ctx.setLineDash([]);
+
+                ctx.strokeStyle = '#FFFFFF';
+                ctx.lineWidth = 9;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(88, 0); ctx.lineTo(88, canvas.height);
+                ctx.moveTo(332, 0); ctx.lineTo(332, canvas.height);
+                ctx.stroke();
+            }
+
+            function drawRealisticCar(car) {
+                let x = car.x, y = car.y;
+                let w = car.width, h = car.height;
+
+                ctx.fillStyle = car.color;
+                ctx.fillRect(x + 4, y + 12, w - 8, h - 24);
+                ctx.fillStyle = '#000';
+                ctx.fillRect(x + 8, y + 8, w - 16, 20);
+                ctx.fillStyle = 'rgba(135, 206, 235, 0.4)';
+                ctx.fillRect(x + 12, y + 12, w - 24, 12);
+                ctx.fillStyle = '#1a1a1a';
+                ctx.beginPath();
+                ctx.arc(x + 10, y + h - 12, 9, 0, Math.PI * 2);
+                ctx.arc(x + w - 14, y + h - 12, 9, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x + 10, y + h - 12, 4, 0, Math.PI * 2);
+                ctx.arc(x + w - 14, y + h - 12, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#FFFF99';
+                ctx.beginPath();
+                ctx.arc(x + 2, y + 25, 5, 0, Math.PI * 2);
+                ctx.arc(x + w - 6, y + 25, 5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            function drawRealRickshaw() {
+
+                ctx.save();
+
+                ctx.translate(player.x + 22, player.y + 35);
+                ctx.rotate(player.tilt);
+
+                let x = -22;
+                let y = -35;
+
+                ctx.fillStyle = '#FFD700';
+                ctx.fillRect(x, y + 12, 42, 38);
+
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(x + 3, y + 15, 36, 28);
+
+                ctx.fillStyle = '#FFD700';
+                ctx.fillRect(x + 8, y + 42, 26, 16);
+
+                ctx.fillStyle = '#222';
+                ctx.beginPath();
+                ctx.arc(x + 6, y + 63, 8, 0, Math.PI * 2);
+                ctx.arc(x + 36, y + 63, 8, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(x + 6, y + 63, 4, 0, Math.PI * 2);
+                ctx.arc(x + 36, y + 63, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.fillStyle = '#FFFF99';
+                ctx.beginPath();
+                ctx.arc(x - 1, y + 28, 4, 0, Math.PI * 2);
+                ctx.arc(x + 43, y + 28, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.restore();
+            }
+
+            function drawTrees() {
+                trees.forEach(t => {
+                    ctx.fillStyle = '#8B4513';
+                    ctx.fillRect(t.x + 10, t.y + 25, 6, 20);
+                    ctx.fillStyle = '#228B22';
+                    ctx.beginPath();
+                    ctx.arc(t.x + 12, t.y + 12, 18, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            function drawObstacles() {
+                obstacles.forEach(o => {
+                    switch (o.type) {
+                        case 'car':
+                            drawRealisticCar(o);
+                            break;
+                        case 'dog':
+                            ctx.fillStyle = '#8B4513';
+                            ctx.fillRect(o.x + 2, o.y + 8, o.width - 4, o.height - 8);
+                            ctx.fillStyle = '#000';
+                            ctx.beginPath();
+                            ctx.arc(o.x + 10, o.y + 12, 4, 0, Math.PI * 2);
+                            ctx.arc(o.x + 25, o.y + 12, 4, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#FF4500';
+                            ctx.fillRect(o.x + 15, o.y + 25, 8, 6);
+                            break;
+                        case 'barricade':
+                            ctx.fillStyle = '#FF6600';
+                            ctx.fillRect(o.x, o.y, o.width, o.height);
+                            ctx.fillStyle = '#FFF';
+                            ctx.fillRect(o.x + 10, o.y + 8, o.width - 20, 10);
+                            break;
+                        case 'bike':
+                            ctx.fillStyle = '#FF4500';
+                            ctx.fillRect(o.x + 4, o.y + 15, o.width - 8, 40);
+                            ctx.fillStyle = '#333';
+                            ctx.beginPath();
+                            ctx.arc(o.x + 8, o.y + 55, 7, 0, Math.PI * 2);
+                            ctx.arc(o.x + 30, o.y + 55, 7, 0, Math.PI * 2);
+                            ctx.fill();
+                            break;
+                        case 'pothole':
+                            ctx.fillStyle = '#1a1a1a';
+                            ctx.beginPath();
+                            ctx.ellipse(o.x + o.width / 2, o.y + o.height / 2, o.width / 2.2, o.height / 2.2, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = '#444';
+                            ctx.beginPath();
+                            ctx.ellipse(o.x + o.width / 2 - 8, o.y + o.height / 2 - 5, 12, 10, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.fillStyle = 'rgba(100, 149, 237, 0.6)';
+                            ctx.beginPath();
+                            ctx.ellipse(o.x + o.width / 2 + 5, o.y + o.height / 2 + 3, 8, 6, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                            break;
+                    }
+                });
+            }
+
+            function drawRewards() {
+                rewards.forEach(r => {
+                    ctx.save();
+                    ctx.translate(r.x + r.size / 2, r.y + r.size / 2);
+                    ctx.rotate(r.spin);
+
+                    if (r.type === 'coin') {
+                        ctx.fillStyle = '#FFD700';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, r.size, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#FFF';
+                        ctx.beginPath();
+                        ctx.arc(-4, -4, 3, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = '#FFA500';
+                        ctx.beginPath();
+                        ctx.arc(0, 0, r.size * 0.6, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    else if (r.type === 'chai') {
+                        ctx.fillStyle = '#D2B48C';
+                        ctx.fillRect(-r.size / 2.5, -r.size, r.size / 1.25, r.size * 1.8);
+                        ctx.fillStyle = '#8B4513';
+                        ctx.fillRect(-r.size / 2.5 + 1, -r.size * 0.8, r.size / 1.25 - 2, r.size);
+                        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                        ctx.beginPath();
+                        ctx.arc(-3, -r.size * 0.9, 4, 0, Math.PI);
+                        ctx.arc(0, -r.size * 1.1, 5, 0, Math.PI);
+                        ctx.arc(3, -r.size * 0.95, 4, 0, Math.PI);
+                        ctx.fill();
+                    }
+                    else if (r.type === 'snack') {
+                        ctx.fillStyle = '#D2691E';
+                        ctx.beginPath();
+                        ctx.moveTo(-r.size * 0.8, -r.size * 0.3);
+                        ctx.lineTo(-r.size * 0.3, -r.size * 0.9);
+                        ctx.lineTo(r.size * 0.6, -r.size * 0.4);
+                        ctx.lineTo(r.size * 0.2, r.size * 0.6);
+                        ctx.lineTo(-r.size * 0.6, r.size * 0.1);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                        ctx.beginPath();
+                        ctx.arc(-r.size * 0.2, -r.size * 0.2, r.size * 0.3, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                });
+            }
+
+            function drawRain() {
+                if (rainActive) {
+                    ctx.fillStyle = 'rgba(100, 149, 237, 0.25)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.strokeStyle = 'rgba(135, 206, 235, 0.9)';
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = 'round';
+                    rainDrops.forEach(drop => {
+                        ctx.beginPath();
+                        ctx.moveTo(drop.x, drop.y);
+                        ctx.lineTo(drop.x + drop.len * 0.3, drop.y + drop.len);
+                        ctx.stroke();
+                    });
+                }
+            }
+
+            function drawLightning() {
+
+                if (lightning > 0) {
+
+                    ctx.fillStyle = "rgba(255,255,255,0.6)";
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    lightning--;
+                }
+
+            }
+
+            function drawBuildings() {
+                buildings.forEach(b => {
+                    ctx.fillStyle = ['#666', '#888', '#AAA'][Math.floor(Math.random() * 3)];
+                    ctx.fillRect(b.x, b.y, 55, b.height);
+                });
+            }
+
+            function drawShops() {
+                shops.forEach(s => {
+                    ctx.fillStyle = '#D2691E';
+                    ctx.fillRect(s.x, s.y, 42, 32);
+                    ctx.fillStyle = '#FFEB3B';
+                    ctx.font = 'bold 11px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('CHAI', s.x + 22, s.y + 20);
+                    ctx.textAlign = 'left';
+                });
+            }
+
+            function drawConstruction() {
+                construction.forEach(c => {
+                    ctx.fillStyle = '#FF8C00';
+                    ctx.fillRect(c.x, c.y, c.width, c.height);
+                    ctx.fillStyle = '#FFD700';
+                    ctx.beginPath();
+                    ctx.arc(c.x + 25, c.y + 20, 15, 0, Math.PI * 2);
+                    ctx.arc(c.x + 65, c.y + 20, 15, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawBackground();
+                drawTrees();
+                drawBuildings();
+                drawShops();
+                drawConstruction();
+                drawRoad();
+                drawRealRickshaw();
+                drawObstacles();
+                drawRewards();
+                drawRain();
+                drawRain();
+                drawLightning();
+
+                document.getElementById('score').textContent = score;
+            }
+
+            function gameLoop() {
+                if (gameRunning) update();
+                draw();
+                requestAnimationFrame(gameLoop);
+            }
+
+            gameLoop();
+        </script>
+    </body>
+</html>
