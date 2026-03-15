@@ -13,7 +13,7 @@ The simulation undergoes a cellular shift every 2000 distance units. The environ
 
 Village Phase: Sparse trees, farms, and lower speeds.
 
-Suburb Phase: Mixed shops, roadside buildings, and increasing traffic.
+Suburb Phase: Mixed shops, roadside buildings, and increasing traffic. ( Will be added )
 
 City Phase: Dense concrete, heavy construction, and maximum chaos.
 
