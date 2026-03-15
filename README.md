@@ -24,7 +24,7 @@ Ecosystem Obstacles: Features "Street Dog AI" with wandering movement, construct
 
 Survival Instincts: Reach a distance of 4000 to unlock "Quick Dodge," providing faster lane-switching capabilities to handle high-speed traffic.
 
-Weather Interference: At distance 3000, random monsoon rain arrives, adding a blue atmospheric overlay and slicker control physics.
+Weather Interference: At distance 5000, random monsoon rain arrives, adding a blue atmospheric overlay and slicker control physics.
 
 🍢 Authentic Mumbai Artifacts
 Survival comes with luck. Collect scattered items to boost your score:
